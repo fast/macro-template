@@ -16,11 +16,67 @@
 [actions-badge]: https://github.com/fast/macro-template/workflows/CI/badge.svg
 [actions-url]: https://github.com/fast/macro-template/actions?query=workflow%3ACI
 
-## Overview
-
 macro-template is a procedural macro that generates repeated Rust code in multiple places with table-driven sources.
 
-For example, the following code generates `From` implementations for `MyEnum` from all its variants:
+## Motivations
+
+This crate is inspired by [`match-template`](https://github.com/tisonkun/match-template/) and [`macro_find_and_replace`](https://github.com/lord-ne/rust-macro-find-and-replace).
+
+When developing ScopeDB, we introduced these two proc-macros to generate repeated code for match arms and impls. I noticed that they share a common pattern: iterating over a table of values and generating code based on it. I wanted to unify these patterns into a single, concise, but flexible macro that can handle various use cases. That's how `macro-template` was born.
+
+Last but not least, I found [`seq-macro`](https://github.com/dtolnay/seq-macro) and borrowed some ideas from it, such as iterating over a range of numbers, characters, or bytes, and using a syntax `@splice { }` (equivalent to `seq-macro`'s or `quote`'s `#( ... )*`) to generate partial repeated replacement. This eliminates the need for an extra `template_match!` to handle repetitions in match arms, and allows for more flexible code generation.
+
+Go back to the beginning, why do you need `macro_template:template!` at all? Isn't it the same as a simple `macro_rules!`?
+
+```rust
+macro_rules! impl_serialize {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl serde_core::Serialize for BSize<$ty> {
+                fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+                where
+                    S: serde_core::Serializer,
+                {
+                    if ser.is_human_readable() {
+                        ser.collect_str(self)
+                    } else {
+                        self.0.serialize(ser)
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl_serialize!(u8, u16, u32, u64, usize);
+```
+
+Except that `macro_template:template!` supports more flexible replacement patterns as shown in the [Examples](#examples) section, `template!` has a concise syntax, and it saves you from declaring an extra `macro_rules!` (Naming It!) and invoking it.
+
+The example above can be rewritten as:
+
+```rust
+macro_template::template! {
+    for Ty in [u8, u16, u32, u64, usize] {
+        impl serde_core::Serialize for BSize<Ty> {
+            fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde_core::Serializer,
+            {
+                if ser.is_human_readable() {
+                    ser.collect_str(self)
+                } else {
+                    self.0.serialize(ser)
+                }
+            }
+        }
+    }
+}
+```
+
+## Examples
+
+Firstly, the following code generates `From` implementations for `MyEnum` from all its variants:
 
 ```rust
 enum MyEnum {
@@ -142,5 +198,3 @@ The current policy is that the minimum Rust version required to use this crate c
 ## License
 
 This project is licensed under [Apache License, Version 2.0](LICENSE).
-
-## Origins

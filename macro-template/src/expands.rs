@@ -38,16 +38,35 @@ struct Template {
 
 impl Parse for Template {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
+        // template! {
+        // <!-- source start -->
+        //     for (Endian, Method) in [
+        //         (LittleEndian, to_le_bytes),
+        //         (BigEndian, to_be_bytes),
+        //         (NativeEndian, to_ne_bytes)
+        //     ],
+        //     for (Ty, Width) in [
+        //         (u16, 2),
+        //         (u32, 4),
+        //     ],
+        // <!-- source end -->
         let sources = input.parse::<Sources>()?;
-
+        // <!-- template start -->
+        //     {
+        //         impl StoreBytes<Endian, Width> for Ty {
+        //             fn store_bytes(&self) -> [u8; Width] {
+        //                 self.Method()
+        //             }
+        //         }
+        //     }
+        // <!-- template end -->
         let template;
         braced!(template in input);
         let template = template.parse::<TokenStream>()?;
-
+        // }
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after template body"));
         }
-
         Ok(Self { sources, template })
     }
 }
