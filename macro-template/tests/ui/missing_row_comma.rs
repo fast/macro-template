@@ -12,20 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! [`template!`] is a procedural macro that generates repeated Rust code in multiple places with
-//! table-driven sources.
+use macro_template::template;
 
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![deny(missing_docs)]
-
-mod expands;
-mod sources;
-
-/// Expands an item, block, or statement template from one or more sources.
-#[proc_macro]
-pub fn template(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    match expands::expand(input.into()) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
+fn main() {
+    template! {
+        for (Ty, Width) in [
+            (u16, 2)
+            (u32, 4),
+        ] {
+            let _: [Ty; Width];
+        }
     }
 }

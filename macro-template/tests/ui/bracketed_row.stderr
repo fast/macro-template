@@ -1,0 +1,5 @@
+error: multi-placeholder source rows must use parentheses, such as `(u16, 2)`
+ --> tests/ui/bracketed_row.rs:6:13
+  |
+6 |             [u16, 2],
+  |             ^
