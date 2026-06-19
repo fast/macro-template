@@ -117,14 +117,19 @@ impl SourceRow {
         if expected != found {
             let mut error = Error::new_spanned(
                 TokenStream::from_iter(values.clone()),
-                format!("this row provides {}", replacement_value_count(found)),
+                format!(
+                    "this row provides {} value{}",
+                    found,
+                    if found == 1 { "" } else { "s" }
+                ),
             );
             error.combine(Error::new_spanned(
                 placeholders,
                 format!(
-                    "placeholders `{}` require {}",
+                    "placeholders `{}` require {} value{}",
                     placeholders.display(),
-                    replacement_value_count(expected)
+                    expected,
+                    if expected == 1 { "" } else { "s" }
                 ),
             ));
             return Err(error);
@@ -633,11 +638,4 @@ fn parse_tokens_until_comma(input: ParseStream<'_>) -> Result<TokenStream> {
     }
 
     Ok(tokens.into_iter().collect())
-}
-
-fn replacement_value_count(count: usize) -> String {
-    match count {
-        1 => "1 replacement value".to_owned(),
-        _ => format!("{count} replacement values"),
-    }
 }
