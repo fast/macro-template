@@ -505,19 +505,16 @@ impl TemplateVars {
 
 impl Parse for TemplateVars {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
-        if input.peek(syn::token::Bracket) {
-            return Err(input
-                .error("multiple template variables must use parentheses, such as `(Ty, Width)`"));
-        }
-
         let idents = if input.peek(syn::token::Paren) {
             let content;
             parenthesized!(content in input);
 
             parse_var_list(&content)?
-        } else {
-            let ident = input.parse::<Ident>()?;
+        } else if let Ok(ident) = input.parse::<Ident>() {
             vec![ident]
+        } else {
+            return Err(input
+                .error("multiple template variables must use parentheses, such as `(Ty, Width)`"));
         };
 
         let vars = Self { idents };
