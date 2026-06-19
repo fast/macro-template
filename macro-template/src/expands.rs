@@ -26,7 +26,8 @@ use syn::parse::ParseStream;
 use crate::sources::Sources;
 
 pub fn expand(input: TokenStream) -> Result<TokenStream> {
-    syn::parse2::<Template>(input)?.expand()
+    let template = syn::parse2::<Template>(input)?;
+    Ok(template.expand())
 }
 
 #[derive(Clone)]
@@ -85,7 +86,7 @@ impl Parse for Template {
 }
 
 impl Template {
-    fn expand(self) -> Result<TokenStream> {
+    fn expand(self) -> TokenStream {
         let Self {
             sources: Sources { rows },
             template,
@@ -99,14 +100,14 @@ impl Template {
         let mut found_splice = false;
         let expanded = expand_splice_blocks(&replacements, template.clone(), &mut found_splice);
         if found_splice {
-            return Ok(expanded);
+            expanded
+        } else {
+            let mut output = TokenStream::new();
+            for replacement in replacements {
+                output.extend(replace_token_stream(template.clone(), replacement));
+            }
+            output
         }
-
-        let mut output = TokenStream::new();
-        for replacement in replacements {
-            output.extend(replace_token_stream(template.clone(), replacement));
-        }
-        Ok(output)
     }
 }
 
