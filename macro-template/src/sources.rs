@@ -30,40 +30,26 @@ use syn::punctuated::Punctuated;
 use crate::expands::Replacement;
 
 pub struct SourceRow {
-    replacements: Vec<Replacement>,
-    span_tokens: TokenStream,
+    pub replacements: Vec<Replacement>,
 }
 
 impl SourceRow {
-    pub fn replacements(&self) -> &[Replacement] {
-        &self.replacements
-    }
-
     fn empty() -> Self {
-        Self::from_replacements(Vec::new(), TokenStream::new())
+        Self {
+            replacements: vec![],
+        }
     }
 
     fn single(placeholder: &Ident, value: TokenStream) -> Self {
         Self {
-            replacements: vec![Replacement::new(placeholder.clone(), value.clone())],
-            span_tokens: value,
-        }
-    }
-
-    fn from_replacements(replacements: Vec<Replacement>, span_tokens: TokenStream) -> Self {
-        Self {
-            replacements,
-            span_tokens,
+            replacements: vec![Replacement::new(placeholder.clone(), value)],
         }
     }
 
     fn merge(&self, other: &Self) -> Self {
-        let mut replacements = self.replacements().to_vec();
-        replacements.extend(other.replacements().iter().cloned());
-        Self::from_replacements(
-            replacements,
-            join_tokens([self.span_tokens.clone(), other.span_tokens.clone()]),
-        )
+        Self {
+            replacements: [self.replacements.clone(), other.replacements.clone()].concat(),
+        }
     }
 
     fn zip_placeholders(placeholders: &Placeholders, values: Vec<TokenStream>) -> Result<Self> {
@@ -85,10 +71,7 @@ impl SourceRow {
             .map(|(placeholder, value)| Replacement::new(placeholder, value))
             .collect::<Vec<_>>();
 
-        Ok(Self {
-            replacements,
-            span_tokens,
-        })
+        Ok(Self { replacements })
     }
 }
 

@@ -24,7 +24,6 @@ use syn::braced;
 use syn::parse::Parse;
 use syn::parse::ParseStream;
 
-use crate::sources::SourceRow;
 use crate::sources::Sources;
 
 pub fn expand(input: TokenStream) -> Result<TokenStream> {
@@ -78,7 +77,10 @@ impl Template {
             template,
         } = self;
 
-        let replacements = rows.iter().map(SourceRow::replacements).collect::<Vec<_>>();
+        let replacements = rows
+            .iter()
+            .map(|src| src.replacements.as_slice())
+            .collect::<Vec<_>>();
 
         if contains_splice_block(template.clone()) {
             let common_replacements = common_replacements(&placeholders, &replacements);
