@@ -18,13 +18,13 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs)]
 
-mod expands;
-mod sources;
+mod expand;
+mod parse;
 
 /// Expands an item, block, or statement template from one or more sources.
 #[proc_macro]
 pub fn template(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    match expands::expand(input.into()) {
+    match expand::expand(input.into()) {
         Ok(tokens) => tokens.into(),
         Err(error) => error.to_compile_error().into(),
     }

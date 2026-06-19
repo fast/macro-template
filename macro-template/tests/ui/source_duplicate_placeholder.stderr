@@ -1,10 +1,10 @@
-error: source placeholder `Ty` duplicates an earlier source placeholder
+error: the placeholder `Ty` duplicates an earlier one
  --> tests/ui/source_duplicate_placeholder.rs:6:13
   |
 6 |         for Ty in [u16] {
   |             ^^
 
-error: earlier source placeholder `Ty` first declared here
+error: an earlier placeholder `Ty` declared here
  --> tests/ui/source_duplicate_placeholder.rs:5:13
   |
 5 |         for Ty in [u8],

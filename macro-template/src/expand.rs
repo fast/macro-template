@@ -14,104 +14,32 @@
 
 use proc_macro2::Delimiter;
 use proc_macro2::Group;
-use proc_macro2::Ident;
 use proc_macro2::TokenStream;
 use proc_macro2::TokenTree;
 use syn::Result;
-use syn::braced;
-use syn::parse::Parse;
-use syn::parse::ParseStream;
 
-use crate::sources::Sources;
+use crate::parse::Replacement;
+use crate::parse::Template;
 
 pub fn expand(input: TokenStream) -> Result<TokenStream> {
-    let template = syn::parse2::<Template>(input)?;
-    Ok(template.expand())
-}
+    let Template { rows, template } = syn::parse2::<Template>(input)?;
 
-#[derive(Clone)]
-pub struct Replacement {
-    placeholder: Ident,
-    tokens: TokenStream,
-}
+    let replacements = rows
+        .iter()
+        .map(|src| src.replacements.as_slice())
+        .collect::<Vec<_>>();
 
-impl Replacement {
-    pub(crate) fn new(placeholder: Ident, tokens: TokenStream) -> Self {
-        Self {
-            placeholder,
-            tokens,
-        }
+    let mut found_splice = false;
+    let expanded = expand_splice_blocks(&replacements, template.clone(), &mut found_splice);
+    if found_splice {
+        return Ok(expanded);
     }
 
-    pub(crate) fn placeholder(&self) -> &Ident {
-        &self.placeholder
+    let mut output = TokenStream::new();
+    for replacement in replacements {
+        output.extend(replace_token_stream(replacement, template.clone()));
     }
-}
-
-struct Template {
-    sources: Sources,
-    template: TokenStream,
-}
-
-impl Parse for Template {
-    fn parse(input: ParseStream<'_>) -> Result<Self> {
-        // template! {
-        // <!-- source start -->
-        //     for (Endian, Method) in [
-        //         (LittleEndian, to_le_bytes),
-        //         (BigEndian, to_be_bytes),
-        //         (NativeEndian, to_ne_bytes)
-        //     ],
-        //     for (Ty, Width) in [
-        //         (u16, 2),
-        //         (u32, 4),
-        //     ],
-        // <!-- source end -->
-        let sources = input.parse::<Sources>()?;
-        // <!-- template start -->
-        //     {
-        //         impl StoreBytes<Endian, Width> for Ty {
-        //             fn store_bytes(&self) -> [u8; Width] {
-        //                 self.Method()
-        //             }
-        //         }
-        //     }
-        // <!-- template end -->
-        let template;
-        braced!(template in input);
-        let template = template.parse::<TokenStream>()?;
-        // }
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after template body"));
-        }
-        Ok(Self { sources, template })
-    }
-}
-
-impl Template {
-    fn expand(self) -> TokenStream {
-        let Self {
-            sources: Sources { rows },
-            template,
-        } = self;
-
-        let replacements = rows
-            .iter()
-            .map(|src| src.replacements.as_slice())
-            .collect::<Vec<_>>();
-
-        let mut found_splice = false;
-        let expanded = expand_splice_blocks(&replacements, template.clone(), &mut found_splice);
-        if found_splice {
-            expanded
-        } else {
-            let mut output = TokenStream::new();
-            for replacement in replacements {
-                output.extend(replace_token_stream(replacement, template.clone()));
-            }
-            output
-        }
-    }
+    Ok(output)
 }
 
 fn replace_token_stream(replacements: &[Replacement], tokens: TokenStream) -> TokenStream {
@@ -125,8 +53,8 @@ fn replace_token_stream(replacements: &[Replacement], tokens: TokenStream) -> To
                 new_tokens.extend([TokenTree::Group(new_group)]);
             }
             TokenTree::Ident(ident) => {
-                if let Ok(index) = replacements
-                    .binary_search_by(|replacement| replacement.placeholder().cmp(&ident))
+                if let Ok(index) =
+                    replacements.binary_search_by(|replacement| replacement.placeholder.cmp(&ident))
                 {
                     new_tokens.extend(replacements[index].tokens.clone());
                 } else {

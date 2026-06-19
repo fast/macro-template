@@ -21,68 +21,25 @@ use syn::Error;
 use syn::Lit;
 use syn::Result;
 use syn::Token;
+use syn::braced;
 use syn::bracketed;
 use syn::parenthesized;
 use syn::parse::Parse;
 use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
 
-use crate::expands::Replacement;
-
-pub struct SourceRow {
-    pub replacements: Vec<Replacement>,
+#[derive(Clone)]
+pub struct Replacement {
+    pub placeholder: Ident,
+    pub tokens: TokenStream,
 }
 
-impl SourceRow {
-    fn empty() -> Self {
-        Self {
-            replacements: vec![],
-        }
-    }
-
-    fn single(placeholder: &Ident, value: TokenStream) -> Self {
-        Self {
-            replacements: vec![Replacement::new(placeholder.clone(), value)],
-        }
-    }
-
-    fn merge(&self, other: &Self) -> Self {
-        let mut replacements = self.replacements.clone();
-        replacements.extend(other.replacements.iter().cloned());
-        replacements.sort_by(|left, right| left.placeholder().cmp(right.placeholder()));
-
-        Self { replacements }
-    }
-
-    fn zip_placeholders(placeholders: &Placeholders, values: Vec<TokenStream>) -> Result<Self> {
-        let expected = placeholders.len();
-        let found = values.len();
-        let span_tokens = join_tokens(values.iter().cloned());
-        if expected != found {
-            return Err(Error::new_spanned(
-                &span_tokens,
-                format!("expected {expected} replacement values, found {found}"),
-            ));
-        }
-
-        let mut replacements = placeholders
-            .idents
-            .iter()
-            .cloned()
-            .zip(values)
-            .map(|(placeholder, value)| Replacement::new(placeholder, value))
-            .collect::<Vec<_>>();
-        replacements.sort_by(|left, right| left.placeholder().cmp(right.placeholder()));
-
-        Ok(Self { replacements })
-    }
-}
-
-pub struct Sources {
+pub struct Template {
     pub rows: Vec<SourceRow>,
+    pub template: TokenStream,
 }
 
-impl Parse for Sources {
+impl Parse for Template {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let mut sources = vec![];
         let mut placeholders = vec![];
@@ -114,7 +71,69 @@ impl Parse for Sources {
             cartesian_product_rows(sources)
         };
 
-        Ok(Self { rows })
+        let template;
+        braced!(template in input);
+        let template = template.parse::<TokenStream>()?;
+
+        if !input.is_empty() {
+            return Err(input.error("unexpected tokens after template body"));
+        }
+        Ok(Self { rows, template })
+    }
+}
+
+pub struct SourceRow {
+    pub replacements: Vec<Replacement>,
+}
+
+impl SourceRow {
+    fn empty() -> Self {
+        Self {
+            replacements: vec![],
+        }
+    }
+
+    fn single(placeholder: &Ident, value: TokenStream) -> Self {
+        Self {
+            replacements: vec![Replacement {
+                placeholder: placeholder.clone(),
+                tokens: value,
+            }],
+        }
+    }
+
+    fn merge(&self, other: &Self) -> Self {
+        let mut replacements = self.replacements.clone();
+        replacements.extend(other.replacements.iter().cloned());
+        replacements.sort_by(|left, right| left.placeholder.cmp(&right.placeholder));
+
+        Self { replacements }
+    }
+
+    fn zip_placeholders(placeholders: &Placeholders, values: Vec<TokenStream>) -> Result<Self> {
+        let expected = placeholders.len();
+        let found = values.len();
+        let span_tokens = join_tokens(values.iter().cloned());
+        if expected != found {
+            return Err(Error::new_spanned(
+                &span_tokens,
+                format!("expected {expected} replacement values, found {found}"),
+            ));
+        }
+
+        let mut replacements = placeholders
+            .idents
+            .iter()
+            .cloned()
+            .zip(values)
+            .map(|(placeholder, value)| Replacement {
+                placeholder,
+                tokens: value,
+            })
+            .collect::<Vec<_>>();
+        replacements.sort_by(|left, right| left.placeholder.cmp(&right.placeholder));
+
+        Ok(Self { replacements })
     }
 }
 
