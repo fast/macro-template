@@ -96,7 +96,9 @@ impl Template {
             .map(|src| src.replacements.as_slice())
             .collect::<Vec<_>>();
 
-        if let Some(expanded) = expand_splice_blocks(&replacements, template.clone()) {
+        let mut found_splice = false;
+        let expanded = expand_splice_blocks(&replacements, template.clone(), &mut found_splice);
+        if found_splice {
             return Ok(expanded);
         }
 
@@ -138,19 +140,17 @@ fn replace_token_stream(tokens: TokenStream, replacements: &[Replacement]) -> To
 fn expand_splice_blocks(
     replacements_by_row: &[&[Replacement]],
     tokens: TokenStream,
-) -> Option<TokenStream> {
+    found_splice: &mut bool,
+) -> TokenStream {
     let mut tokens = tokens.into_iter().collect::<Vec<_>>();
-    let mut found_splice = false;
 
     let mut i = 0;
     while i < tokens.len() {
         if let TokenTree::Group(group) = &mut tokens[i] {
-            if let Some(content) = expand_splice_blocks(replacements_by_row, group.stream()) {
-                let mut new_group = Group::new(group.delimiter(), content);
-                new_group.set_span(group.span());
-                *group = new_group;
-                found_splice = true;
-            }
+            let content = expand_splice_blocks(replacements_by_row, group.stream(), found_splice);
+            let mut new_group = Group::new(group.delimiter(), content);
+            new_group.set_span(group.span());
+            *group = new_group;
             i += 1;
             continue;
         }
@@ -160,7 +160,7 @@ fn expand_splice_blocks(
             continue;
         };
 
-        found_splice = true;
+        *found_splice = true;
         let mut repeated = Vec::new();
         for row_replacements in replacements_by_row {
             repeated.extend(replace_token_stream(template.clone(), row_replacements));
@@ -171,7 +171,7 @@ fn expand_splice_blocks(
         i += repeated_len;
     }
 
-    found_splice.then(|| tokens.into_iter().collect())
+    tokens.into_iter().collect()
 }
 
 fn enter_splice_block(tokens: &[TokenTree]) -> Option<TokenStream> {
