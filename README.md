@@ -22,62 +22,36 @@ macro-template provides `template!`, a procedural macro for generating repeated 
 
 ## Motivation
 
-While working on ScopeDB, I replaced two procedural macros with this crate: [`match-template`](https://github.com/tisonkun/match-template/), which ScopeDB used to generate match arms over rowset concrete types and system-view variants, and [`macro_find_and_replace`](https://github.com/lord-ne/rust-macro-find-and-replace/), which it used for wrappers such as `with_types!` and `with_system_views!` that repeated a block after replacing one identifier with each type in a list.
+`macro-template` resulted from a ScopeDB code refactor. ScopeDB has used [`match-template`](https://github.com/tisonkun/match-template/) for variant/type match arms and [`macro_find_and_replace`](https://github.com/lord-ne/rust-macro-find-and-replace/) for repeating Rust fragments over type lists. While replacing them, I found that I wanted the same thing in both places: write the choices once, name the columns, and use those names in Rust syntax. There was no existing macro fitting that shape.
 
-That migration is the motivating case for `macro-template`. The two old macros looked unrelated at the call site: `match-template` had an assignment-like map syntax such as `T = [...]` or `(Variant, View) = [A => B]`, while `macro_find_and_replace` used positional arguments around the token to replace. But the code I wanted to write had the same shape in both places: bind one or more identifiers to a row of tokens, then expand ordinary Rust tokens with those bindings.
-
-ScopeDB's system views make the shape visible. The useful data is just a table such as `(Databases, DatabasesView)` and `(Schemas, SchemasView)`; the generated code may use one column as an enum variant and the other as a type:
+That is the table-driven case `template!` is built around:
 
 ```rust
-struct DatabasesView;
-struct SchemasView;
-
-impl DatabasesView {
-    const TABLE_NAME: &'static str = "databases";
+trait ReadLe {
+    fn read_le(input: &[u8]) -> Self;
 }
 
-impl SchemasView {
-    const TABLE_NAME: &'static str = "schemas";
-}
-
-enum SystemView {
-    Databases(DatabasesView),
-    Schemas(SchemasView),
-}
-
-fn system_view(table_name: &str) -> Option<SystemView> {
-    macro_template::template! {
-        for (Variant, View) in [
-            (Databases, DatabasesView),
-            (Schemas, SchemasView),
-        ] {
-            match table_name {
-                #(View::TABLE_NAME => Some(SystemView::Variant(View)),)*
-                _ => None,
+macro_template::template! {
+    for (Ty, Width) in [
+        (u16, 2),
+        (u32, 4),
+        (u64, 8),
+    ] {
+        impl ReadLe for Ty {
+            fn read_le(input: &[u8]) -> Self {
+                Ty::from_le_bytes(input[..Width].try_into().unwrap())
             }
         }
     }
 }
 
-assert!(matches!(system_view("schemas"), Some(SystemView::Schemas(_))));
+assert_eq!(u16::read_le(&[0x34, 0x12]), 0x1234);
+assert_eq!(u32::read_le(&[1, 0, 0, 0]), 1);
 ```
 
-The problem was not that those crates were bad; it was that every crate had a different mini-language. Reading a call site meant remembering which token was the placeholder, whether `=>` described two substitutions or a match arm, where commas belonged to the macro input, and which part of the Rust body was actually repeated.
-
-I later noticed the same idea in [`seq-macro`](https://github.com/dtolnay/seq-macro): bind an identifier to each number, byte, or character in a range, then expand a Rust fragment, with `#( ... )*` marking the part that repeats inside a surrounding item. That made the common model clearer: this is table-driven token substitution, not a match-specific or sequence-specific trick.
-
-`template!` uses one syntax for these cases:
-
-1. declare one or more template identifiers after `for`;
-2. provide rows with `in [...]` or a range with `in 0..N`;
-3. write the Rust tokens to generate in the block;
-4. add more `for` clauses when independent dimensions should form a Cartesian product.
-
-The goal is not to invent another domain-specific language, but to make the table-driven shape explicit and keep the template body looking like the Rust it will generate.
+When looking for existing approaches, I also found [`seq-macro`](https://github.com/dtolnay/seq-macro), which covers a neighboring repetition pattern: range-driven generation, where `N in 0..=2` becomes literal tokens like `0`, `1`, and `2`. `template!` keeps both forms under one syntax: table rows, ranges, `#( ... )*` for partial repetition, and multiple `for` clauses for Cartesian products. The examples below expand each case.
 
 ## Examples
-
-The examples below cover whole-body repetition, partial repetition, ranges, and multi-dimensional inputs.
 
 ### Whole-body repetition
 
@@ -146,19 +120,26 @@ macro_template::template! {
 }
 
 assert_eq!(sum, 1110);
+```
 
-let mut chars = String::new();
+This cannot be written using an ordinary for-loop because elements of a tuple can only be accessed by their integer literal index, not by a variable.
 
+Integer ranges preserve the radix, suffix, and shared padding width from their bounds. You can combine this crate with [`paste`](https://docs.rs/paste/) for identifier generation:
+
+```rust
 macro_template::template! {
-    for C in 'x'..='z' {
-        chars.push(C);
+    for N in 000..=002 {
+        paste::paste! {
+            #[derive(Debug, PartialEq, Eq)]
+            enum Demo {
+                #( [<Variant N>], )*
+            }
+        }
     }
 }
 
-assert_eq!(chars, "xyz");
+assert_eq!(format!("{:?}", Demo::Variant001), "Variant001");
 ```
-
-Integer ranges preserve the radix, suffix, and shared padding width from their bounds.
 
 ### Cartesian products
 
