@@ -18,164 +18,174 @@
 
 <!-- macro-template-docs-start -->
 
-macro-template is a procedural macro that generates repeated Rust code in multiple places with table-driven inputs.
+macro-template provides `template!`, a procedural macro for generating repeated Rust code from compact, table-driven inputs.
 
 ## Motivation
 
-This crate is inspired by [`match-template`](https://github.com/tisonkun/match-template/) and [`macro_find_and_replace`](https://github.com/lord-ne/rust-macro-find-and-replace).
+While working on ScopeDB, I replaced two procedural macros with this crate: [`match-template`](https://github.com/tisonkun/match-template/), which ScopeDB used to generate match arms over rowset concrete types and system-view variants, and [`macro_find_and_replace`](https://github.com/lord-ne/rust-macro-find-and-replace/), which it used for wrappers such as `with_types!` and `with_system_views!` that repeated a block after replacing one identifier with each type in a list.
 
-When developing ScopeDB, we introduced these two proc-macros to generate repeated code for match arms and impls. I noticed that they share a common pattern: iterating over a table of values and generating code based on it. I wanted to unify these patterns into a single, concise, but flexible macro that can handle various use cases. That's how `macro-template` was born.
+That migration is the motivating case for `macro-template`. The two old macros looked unrelated at the call site: `match-template` had an assignment-like map syntax such as `T = [...]` or `(Variant, View) = [A => B]`, while `macro_find_and_replace` used positional arguments around the token to replace. But the code I wanted to write had the same shape in both places: bind one or more identifiers to a row of tokens, then expand ordinary Rust tokens with those bindings.
 
-Last but not least, I found [`seq-macro`](https://github.com/dtolnay/seq-macro) and borrowed some ideas from it, such as iterating over a range of numbers, characters, or bytes, and using a syntax `#( ... )*` to generate partial repeated substitutions. This eliminates the need for an extra `template_match!` to handle repetitions in match arms, and allows for more flexible code generation.
+ScopeDB's system views make the shape visible. The useful data is just a table such as `(Databases, DatabasesView)` and `(Schemas, SchemasView)`; the generated code may use one column as an enum variant and the other as a type:
 
-Go back to the beginning, why do you need `macro_template::template!` at all? Isn't it the same as a simple `macro_rules!`?
+```rust
+struct DatabasesView;
+struct SchemasView;
 
-```rust,ignore
-macro_rules! impl_serialize {
-    ($($ty:ty),* $(,)?) => {
-        $(
-            impl serde_core::Serialize for BSize<$ty> {
-                fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
-                where
-                    S: serde_core::Serializer,
-                {
-                    if ser.is_human_readable() {
-                        ser.collect_str(self)
-                    } else {
-                        self.0.serialize(ser)
-                    }
-                }
-            }
-        )*
-    };
+impl DatabasesView {
+    const TABLE_NAME: &'static str = "databases";
 }
 
-impl_serialize!(u8, u16, u32, u64, usize);
-```
+impl SchemasView {
+    const TABLE_NAME: &'static str = "schemas";
+}
 
-Except that `macro_template::template!` supports more flexible substitution patterns as shown in the [Examples](#examples) section, `template!` has a concise syntax, and it saves you from declaring an extra `macro_rules!`, naming it, and invoking it.
+enum SystemView {
+    Databases(DatabasesView),
+    Schemas(SchemasView),
+}
 
-The example above can be rewritten as:
-
-```rust,ignore
-macro_template::template! {
-    for Ty in [u8, u16, u32, u64, usize] {
-        impl serde_core::Serialize for BSize<Ty> {
-            fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde_core::Serializer,
-            {
-                if ser.is_human_readable() {
-                    ser.collect_str(self)
-                } else {
-                    self.0.serialize(ser)
-                }
+fn system_view(table_name: &str) -> Option<SystemView> {
+    macro_template::template! {
+        for (Variant, View) in [
+            (Databases, DatabasesView),
+            (Schemas, SchemasView),
+        ] {
+            match table_name {
+                #(View::TABLE_NAME => Some(SystemView::Variant(View)),)*
+                _ => None,
             }
         }
     }
 }
+
+assert!(matches!(system_view("schemas"), Some(SystemView::Schemas(_))));
 ```
+
+The problem was not that those crates were bad; it was that every crate had a different mini-language. Reading a call site meant remembering which token was the placeholder, whether `=>` described two substitutions or a match arm, where commas belonged to the macro input, and which part of the Rust body was actually repeated.
+
+I later noticed the same idea in [`seq-macro`](https://github.com/dtolnay/seq-macro): bind an identifier to each number, byte, or character in a range, then expand a Rust fragment, with `#( ... )*` marking the part that repeats inside a surrounding item. That made the common model clearer: this is table-driven token substitution, not a match-specific or sequence-specific trick.
+
+`template!` uses one syntax for these cases:
+
+1. declare one or more template identifiers after `for`;
+2. provide rows with `in [...]` or a range with `in 0..N`;
+3. write the Rust tokens to generate in the block;
+4. add more `for` clauses when independent dimensions should form a Cartesian product.
+
+The goal is not to invent another domain-specific language, but to make the table-driven shape explicit and keep the template body looking like the Rust it will generate.
 
 ## Examples
 
-First, you can generate code with a template and a matrix of values:
+The examples below cover whole-body repetition, partial repetition, ranges, and multi-dimensional inputs.
 
-```rust,ignore
+### Whole-body repetition
+
+Without splice syntax, the whole template body is repeated once per input row:
+
+```rust
+trait TypeName {
+    const NAME: &'static str;
+}
+
 macro_template::template! {
-    for (Endian, Method) in [
-        (LittleEndian, to_le_bytes),
-        (BigEndian, to_be_bytes),
-        (NativeEndian, to_ne_bytes)
-    ],
-    for (Ty, Width) in [
-        (u16, 2),
-        (u32, 4),
-    ],
-    {
-        impl StoreBytes<Endian, Width> for Ty {
-            fn store_bytes(&self) -> [u8; Width] {
-                self.Method()
+    for (Ty, Name) in [
+        (u8, "u8"),
+        (u16, "u16"),
+        (u32, "u32"),
+    ] {
+        impl TypeName for Ty {
+            const NAME: &'static str = Name;
+        }
+    }
+}
+
+assert_eq!(<u16 as TypeName>::NAME, "u16");
+```
+
+### Partial repetition
+
+When only part of a surrounding construct should repeat, put that part in `#( ... )*`. A single separator token tree can be written before `*`, such as `#( ... ),*` for comma-separated output:
+
+```rust
+fn keyword_code(text: &str) -> Option<u8> {
+    macro_template::template! {
+        for (Pat, Code) in [
+            ("async", 1u8),
+            ("await", 2u8),
+        ] {
+            match text {
+                #(Pat => Some(Code)),*,
+                _ => None,
             }
         }
     }
 }
+
+assert_eq!(keyword_code("async"), Some(1));
+assert_eq!(keyword_code("await"), Some(2));
+assert_eq!(keyword_code("fn"), None);
 ```
 
-Without splice syntax, the whole template body is repeated once for each row. You can also do substitutions only partially with `#( ... )*`. Like `quote`, a single separator token tree can be written before `*`, such as `#( ... ),*`. For example, to generate match arms:
+When a template contains `#( ... )*` or `#( ... ),*`, template variables are substituted only inside the splice body, and the surrounding tokens are emitted once. Surrounding identifiers stay literal, even when they have the same name as a template variable. If a value should vary, place it in the splice body.
 
-```rust,ignore
-macro_template::template! {
-    for T in [Int, Real, Double] {
-        match Foo {
-            #( EvalType::T => { panic!("{}", EvalType::T); } ),*,
-            EvalType::Other => unreachable!(),
-        }
-    }
-}
-```
+`#( ..., )*` and `#( ... ),*` are different: the latter does not produce a trailing comma. This matches delimiter repetition in `macro_rules!`.
 
-When a template contains `#( ... )*` or `#( ... ),*`, template variables are substituted only inside the splice body, and surrounding tokens are emitted once. Surrounding identifiers stay literal, even when they have the same name as a template variable. If a value should vary, place it in the splice body.
+### Range inputs
 
-Naturally, if the match arm differs left-hand side and right-hand side:
-
-```rust,ignore
-macro_template::template! {
-    for (K, Value) in [
-        (Apple, "apple"),
-        (Banana, "banana"),
-        (Cherry, "cherry"),
-    ] {
-        match kind {
-            #( Kind::K => { println!("{}", Value); } ),*
-        }
-    }
-}
-```
-
-Inputs can also be ranges of numbers, characters, or bytes. Range inputs are written directly after `in`, without surrounding brackets:
+Inputs can also be ranges of integers, characters, or bytes. Range inputs are written directly after `in`, without surrounding brackets:
 
 ```rust
-// sequential numeric counter
 let tuple = (1000, 100, 10);
 let mut sum = 0;
+
 macro_template::template! {
-    for i in 0..3 {
-        sum += tuple.i;
+    for N in 0..3 {
+        sum += tuple.N;
     }
 }
+
 assert_eq!(sum, 1110);
 
-// sequential character collector
-let mut string = String::new();
+let mut chars = String::new();
+
 macro_template::template! {
-    for c in 'x'..='z' {
-        string.push(c);
+    for C in 'x'..='z' {
+        chars.push(C);
     }
 }
-assert_eq!(string, "xyz");
+
+assert_eq!(chars, "xyz");
 ```
 
 Integer ranges preserve the radix, suffix, and shared padding width from their bounds.
 
-You can combine multiple iterators in a single template:
+### Cartesian products
+
+Multiple input clauses form a Cartesian product in clause order. This is useful when two or more independent dimensions share the same generated body:
 
 ```rust
-let mut values = vec![];
+struct Cpu;
+struct Gpu;
+
+trait Kernel<T> {
+    fn run(input: T) -> T;
+}
 
 macro_template::template! {
-    for Prefix in ["read", "write"],
-    for Code in 200..=201 {
-        values.push((Prefix, Code));
+    for Backend in [Cpu, Gpu],
+    for Ty in [f32, f64],
+    {
+        impl Kernel<Ty> for Backend {
+            fn run(input: Ty) -> Ty {
+                input
+            }
+        }
     }
 }
 
-assert_eq!(
-    values,
-    [("read", 200), ("read", 201), ("write", 200), ("write", 201)],
-);
+assert_eq!(<Gpu as Kernel<f64>>::run(1.5), 1.5);
 ```
-
-Multiple input clauses form a Cartesian product in clause order.
 
 <!-- macro-template-docs-end -->
 
