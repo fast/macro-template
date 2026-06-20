@@ -21,9 +21,11 @@ use syn::Result;
 use crate::parse::Binding;
 use crate::parse::Table;
 use crate::parse::Template;
+use crate::parse::substitute;
 
 pub fn expand(input: TokenStream) -> Result<TokenStream> {
-    let Template { table, template } = syn::parse2::<Template>(input)?;
+    let template = syn::parse2::<Template>(input)?;
+    let (table, template) = template.into_parts();
 
     let mut found_splice = false;
     let expanded = expand_splice_blocks(&table, template.clone(), &mut found_splice);
@@ -48,14 +50,7 @@ fn substitute_tokens(bindings: &[Binding], tokens: TokenStream) -> TokenStream {
                 new_group.set_span(group.span());
                 new_tokens.extend([TokenTree::Group(new_group)]);
             }
-            TokenTree::Ident(ident) => {
-                debug_assert!(bindings.is_sorted_by_key(|b| &b.var));
-                if let Ok(index) = bindings.binary_search_by(|b| b.var.cmp(&ident)) {
-                    new_tokens.extend(bindings[index].tokens.clone());
-                } else {
-                    new_tokens.extend([TokenTree::Ident(ident)]);
-                }
-            }
+            TokenTree::Ident(ident) => new_tokens.extend(substitute(ident, bindings)),
             other => new_tokens.extend([other]),
         }
     }

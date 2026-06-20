@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::cmp::Ordering;
+use std::fmt;
+
 use proc_macro2::Ident;
 use proc_macro2::Literal;
 use proc_macro2::TokenStream;
@@ -30,19 +33,53 @@ use syn::punctuated::Punctuated;
 
 #[derive(Clone)]
 pub struct Binding {
-    pub var: Ident,
-    pub tokens: TokenStream,
+    var: Ident,
+    tokens: TokenStream,
+}
+
+impl PartialEq for Binding {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(self.cmp(other), Ordering::Equal)
+    }
+}
+
+impl Eq for Binding {}
+
+impl PartialOrd for Binding {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Binding {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.var.cmp(&other.var)
+    }
+}
+
+pub fn substitute(ident: Ident, bindings: &[Binding]) -> TokenStream {
+    if let Ok(index) = bindings.binary_search_by(|b| b.var.cmp(&ident)) {
+        bindings[index].tokens.clone()
+    } else {
+        TokenTree::Ident(ident).into_token_stream()
+    }
 }
 
 pub struct Template {
-    pub table: Table,
-    pub template: TokenStream,
+    table: Table,
+    template: TokenStream,
+}
+
+impl Template {
+    pub fn into_parts(self) -> (Table, TokenStream) {
+        (self.table, self.template)
+    }
 }
 
 impl Parse for Template {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let mut tables = vec![];
-        let mut vars = Vars::default();
+        let mut vars = Vars { idents: vec![] };
 
         loop {
             let clause = input.parse::<ForClause>()?;
@@ -127,7 +164,7 @@ impl Table {
                 vars,
                 format!(
                     "template variables `{}` require {} row value{}",
-                    vars.display(),
+                    vars,
                     expected,
                     if expected > 1 { "s" } else { "" }
                 ),
@@ -140,12 +177,12 @@ impl Table {
             vars.iter()
                 .cloned()
                 .zip(values)
-                .map(|(var, value)| Binding { var, tokens: value }),
+                .map(|(var, tokens)| Binding { var, tokens }),
         );
-        self.bindings[row_start..].sort_by(|left, right| left.var.cmp(&right.var));
+        self.bindings[row_start..].sort();
         self.num_rows += 1;
-        self.assert_invariant();
 
+        debug_assert_eq!(self.bindings.len(), self.num_rows * self.num_cols);
         Ok(())
     }
 
@@ -159,7 +196,7 @@ impl Table {
         if num_rows == 1 {
             let mut bindings = self.bindings;
             bindings.extend(other.bindings);
-            bindings.sort_by(|left, right| left.var.cmp(&right.var));
+            bindings.sort();
 
             let table = Self {
                 bindings,
@@ -170,35 +207,27 @@ impl Table {
         }
 
         let mut bindings = Vec::with_capacity(num_rows * num_cols);
-
         for left in self.rows() {
             for right in other.rows() {
                 let row_start = bindings.len();
-                bindings.extend(left.iter().cloned());
-                bindings.extend(right.iter().cloned());
-                bindings[row_start..].sort_by(|left, right| left.var.cmp(&right.var));
+                bindings.extend(left.to_vec());
+                bindings.extend(right.to_vec());
+                bindings[row_start..].sort();
             }
         }
 
-        let table = Self {
+        debug_assert_eq!(bindings.len(), num_rows * num_cols);
+        Self {
             bindings,
             num_rows,
             num_cols,
-        };
-        table.assert_invariant();
-        table
+        }
     }
 
     fn row(&self, row: usize) -> &[Binding] {
-        debug_assert!(row < self.num_rows);
-
         let start = row * self.num_cols;
         let end = start + self.num_cols;
         &self.bindings[start..end]
-    }
-
-    fn assert_invariant(&self) {
-        debug_assert_eq!(self.bindings.len(), self.num_rows * self.num_cols);
     }
 }
 
@@ -221,34 +250,8 @@ impl<'a> Iterator for RowsIter<'a> {
     }
 }
 
-struct ForClause {
-    vars: Vars,
-    table: Table,
-}
-
-impl Parse for ForClause {
-    fn parse(input: ParseStream<'_>) -> Result<Self> {
-        input.parse::<Token![for]>()?;
-        let vars = input.parse::<Vars>()?;
-        input.parse::<Token![in]>()?;
-        let table = if input.peek(syn::token::Bracket) {
-            parse_rows(input, &vars)?
-        } else {
-            parse_range_rows(input, &vars)?
-        };
-        Ok(Self { vars, table })
-    }
-}
-
-#[derive(Default)]
 struct Vars {
     idents: Vec<Ident>,
-}
-
-impl ToTokens for Vars {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(self.idents.iter().cloned());
-    }
 }
 
 impl Vars {
@@ -287,25 +290,35 @@ impl Vars {
         self.idents.extend(vars.idents);
         Ok(())
     }
+}
 
-    fn display(&self) -> String {
+impl fmt::Display for Vars {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.idents.as_slice() {
-            [ident] => ident.to_string(),
+            [ident] => write!(f, "{}", ident),
             idents => {
-                let names = idents
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("({names})")
+                write!(f, "(")?;
+                for (i, ident) in idents.iter().enumerate() {
+                    if i != 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", ident)?;
+                }
+                write!(f, ")")
             }
         }
     }
 }
 
+impl ToTokens for Vars {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(self.idents.iter().cloned());
+    }
+}
+
 impl Parse for Vars {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
-        let mut vars = Self::default();
+        let mut vars = Self { idents: vec![] };
 
         if input.peek(syn::token::Paren) {
             let content;
@@ -329,6 +342,25 @@ impl Parse for Vars {
         };
 
         Ok(vars)
+    }
+}
+
+struct ForClause {
+    vars: Vars,
+    table: Table,
+}
+
+impl Parse for ForClause {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        input.parse::<Token![for]>()?;
+        let vars = input.parse::<Vars>()?;
+        input.parse::<Token![in]>()?;
+        let table = if input.peek(syn::token::Bracket) {
+            parse_rows(input, &vars)?
+        } else {
+            parse_range_rows(input, &vars)?
+        };
+        Ok(Self { vars, table })
     }
 }
 
