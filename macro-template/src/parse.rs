@@ -81,52 +81,47 @@ impl Parse for Template {
 
 pub struct Table {
     bindings: Vec<Binding>,
-    row_count: usize,
-    column_count: usize,
-}
-
-pub struct RowsIter<'a> {
-    table: &'a Table,
-    row: usize,
+    num_rows: usize,
+    num_cols: usize,
 }
 
 impl Table {
-    fn empty(column_count: usize) -> Self {
-        Self {
-            bindings: vec![],
-            row_count: 0,
-            column_count,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.row_count == 0
-    }
-
     pub fn rows(&self) -> RowsIter<'_> {
-        self.assert_invariant();
-
         RowsIter {
             table: self,
             row: 0,
         }
     }
+}
+
+impl Table {
+    fn empty(num_cols: usize) -> Self {
+        Self {
+            bindings: vec![],
+            num_rows: 0,
+            num_cols,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.num_rows == 0
+    }
 
     fn add_single_row(&mut self, var: &Ident, value: TokenStream) {
-        debug_assert_eq!(self.column_count, 1);
+        debug_assert_eq!(self.num_cols, 1);
 
         self.bindings.push(Binding {
             var: var.clone(),
             tokens: value,
         });
-        self.row_count += 1;
+        self.num_rows += 1;
         self.assert_invariant();
     }
 
-    fn add_row(&mut self, vars: &TemplateVars, values: Vec<TokenStream>) -> Result<()> {
-        debug_assert_eq!(self.column_count, vars.len());
+    fn add_row(&mut self, vars: &Vars, values: Vec<TokenStream>) -> Result<()> {
+        debug_assert_eq!(self.num_cols, vars.len());
 
-        let expected = self.column_count;
+        let expected = self.num_cols;
         let found = values.len();
         if expected != found {
             let mut error = Error::new_spanned(
@@ -158,19 +153,16 @@ impl Table {
                 .map(|(var, value)| Binding { var, tokens: value }),
         );
         self.bindings[row_start..].sort_by(|left, right| left.var.cmp(&right.var));
-        self.row_count += 1;
+        self.num_rows += 1;
         self.assert_invariant();
 
         Ok(())
     }
 
     fn join(&self, other: &Self) -> Self {
-        self.assert_invariant();
-        other.assert_invariant();
-
-        let column_count = self.column_count + other.column_count;
-        let row_count = self.row_count * other.row_count;
-        let mut bindings = Vec::with_capacity(row_count * column_count);
+        let num_cols = self.num_cols + other.num_cols;
+        let num_rows = self.num_rows * other.num_rows;
+        let mut bindings = Vec::with_capacity(num_rows * num_cols);
 
         for left in self.rows() {
             for right in other.rows() {
@@ -183,37 +175,42 @@ impl Table {
 
         let table = Self {
             bindings,
-            row_count,
-            column_count,
+            num_rows,
+            num_cols,
         };
         table.assert_invariant();
         table
     }
 
     fn row(&self, row: usize) -> &[Binding] {
-        debug_assert!(row < self.row_count);
+        debug_assert!(row < self.num_rows);
 
-        let start = row * self.column_count;
-        let end = start + self.column_count;
+        let start = row * self.num_cols;
+        let end = start + self.num_cols;
         &self.bindings[start..end]
     }
 
     fn assert_invariant(&self) {
-        debug_assert_eq!(self.bindings.len(), self.row_count * self.column_count);
+        debug_assert_eq!(self.bindings.len(), self.num_rows * self.num_cols);
     }
+}
+
+pub struct RowsIter<'a> {
+    table: &'a Table,
+    row: usize,
 }
 
 impl<'a> Iterator for RowsIter<'a> {
     type Item = &'a [Binding];
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.row == self.table.row_count {
-            return None;
+        if self.row < self.table.num_rows {
+            let row = self.table.row(self.row);
+            self.row += 1;
+            Some(row)
+        } else {
+            None
         }
-
-        let row = self.table.row(self.row);
-        self.row += 1;
-        Some(row)
     }
 }
 
@@ -224,27 +221,17 @@ struct ForClause {
 
 impl Parse for ForClause {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
-        let vars = input.parse::<TemplateVars>()?;
-        let var_idents = vars.idents.clone();
+        let vars = input.parse::<Vars>()?;
         input.parse::<Token![in]>()?;
 
         let table = if input.peek(syn::token::Bracket) {
-            let row_values;
-            let bracket_token = bracketed!(row_values in input);
-            let table = parse_rows(&row_values, &vars)?;
-            if table.is_empty() {
-                return Err(Error::new(
-                    bracket_token.span.join(),
-                    "input list must contain at least one row",
-                ));
-            }
-            table
+            parse_rows(input, &vars)?
         } else {
             parse_range_rows(input, &vars)?
         };
 
         Ok(Self {
-            vars: var_idents,
+            vars: vars.idents.clone(),
             table,
         })
     }
@@ -285,17 +272,17 @@ fn table_join(clauses: Vec<Table>) -> Table {
 
     table
 }
-struct TemplateVars {
+struct Vars {
     idents: Vec<Ident>,
 }
 
-impl ToTokens for TemplateVars {
+impl ToTokens for Vars {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.extend(self.idents.clone());
     }
 }
 
-impl TemplateVars {
+impl Vars {
     fn len(&self) -> usize {
         self.idents.len()
     }
@@ -327,7 +314,7 @@ impl TemplateVars {
     }
 }
 
-impl Parse for TemplateVars {
+impl Parse for Vars {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let idents = if input.peek(syn::token::Paren) {
             let content;
@@ -358,7 +345,7 @@ fn parse_var_list(input: ParseStream<'_>) -> Result<Vec<Ident>> {
     Ok(idents.into_iter().collect())
 }
 
-fn parse_range_rows(input: ParseStream<'_>, vars: &TemplateVars) -> Result<Table> {
+fn parse_range_rows(input: ParseStream<'_>, vars: &Vars) -> Result<Table> {
     if vars.len() != 1 {
         return Err(Error::new_spanned(
             &vars.idents[0],
@@ -383,20 +370,31 @@ fn parse_range_rows(input: ParseStream<'_>, vars: &TemplateVars) -> Result<Table
     Ok(table)
 }
 
-fn parse_rows(input: ParseStream<'_>, vars: &TemplateVars) -> Result<Table> {
+fn parse_rows(input: ParseStream<'_>, vars: &Vars) -> Result<Table> {
+    let row_values;
+    let bracket_token = bracketed!(row_values in input);
+
     let mut table = Table::empty(vars.len());
-    while !input.is_empty() {
-        let values = parse_row(input, vars)?;
+    while !row_values.is_empty() {
+        let values = parse_row(&row_values, vars)?;
         table.add_row(vars, values)?;
-        if input.is_empty() {
+        if row_values.is_empty() {
             break;
         }
-        input.parse::<Token![,]>()?;
+        row_values.parse::<Token![,]>()?;
     }
+
+    if table.is_empty() {
+        return Err(Error::new(
+            bracket_token.span.join(),
+            "input list must contain at least one row",
+        ));
+    }
+
     Ok(table)
 }
 
-fn parse_row(input: ParseStream<'_>, vars: &TemplateVars) -> Result<Vec<TokenStream>> {
+fn parse_row(input: ParseStream<'_>, vars: &Vars) -> Result<Vec<TokenStream>> {
     if vars.len() > 1 {
         if !input.peek(syn::token::Paren) {
             return Err(input.error(
