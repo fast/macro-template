@@ -46,9 +46,12 @@ impl Parse for Template {
 
         loop {
             input.parse::<Token![for]>()?;
-            let clause = input.parse::<ForClause>()?;
-            validate_clause_vars(&clause.vars, &mut vars)?;
-            clauses.push(clause.table);
+            let ForClause {
+                vars: clause_vars,
+                table,
+            } = input.parse::<ForClause>()?;
+            validate_clause_vars(clause_vars, &mut vars)?;
+            clauses.push(table);
 
             if !input.peek(Token![,]) {
                 break;
@@ -87,6 +90,8 @@ pub struct Table {
 
 impl Table {
     pub fn rows(&self) -> RowsIter<'_> {
+        self.assert_invariant();
+
         RowsIter {
             table: self,
             row: 0,
@@ -114,7 +119,7 @@ impl Table {
         let found = values.len();
         if expected != found {
             let mut error = Error::new_spanned(
-                TokenStream::from_iter(values.clone()),
+                TokenStream::from_iter(values),
                 format!(
                     "this row provides {} value{}",
                     found,
@@ -148,9 +153,32 @@ impl Table {
         Ok(())
     }
 
-    fn join(&self, other: &Self) -> Self {
+    fn join(self, other: Self) -> Self {
+        self.assert_invariant();
+        other.assert_invariant();
+
         let num_cols = self.num_cols + other.num_cols;
         let num_rows = self.num_rows * other.num_rows;
+        if num_rows == 0 {
+            let table = Self::empty(num_cols);
+            table.assert_invariant();
+            return table;
+        }
+
+        if num_rows == 1 {
+            let mut bindings = self.bindings;
+            bindings.extend(other.bindings);
+            bindings.sort_by(|left, right| left.var.cmp(&right.var));
+
+            let table = Self {
+                bindings,
+                num_rows,
+                num_cols,
+            };
+            table.assert_invariant();
+            return table;
+        }
+
         let mut bindings = Vec::with_capacity(num_rows * num_cols);
 
         for left in self.rows() {
@@ -213,21 +241,18 @@ impl Parse for ForClause {
         let vars = input.parse::<Vars>()?;
         input.parse::<Token![in]>()?;
 
-        let table = if input.peek(syn::token::Bracket) {
-            parse_rows(input, &vars)?
+        let (vars, table) = if input.peek(syn::token::Bracket) {
+            parse_rows(input, vars)?
         } else {
-            parse_range_rows(input, &vars)?
+            parse_range_rows(input, vars)?
         };
 
-        Ok(Self {
-            vars: vars.idents.clone(),
-            table,
-        })
+        Ok(Self { vars, table })
     }
 }
 
-fn validate_clause_vars(new_vars: &[Ident], existing_vars: &mut Vec<Ident>) -> Result<()> {
-    existing_vars.extend_from_slice(new_vars);
+fn validate_clause_vars(new_vars: Vec<Ident>, existing_vars: &mut Vec<Ident>) -> Result<()> {
+    existing_vars.extend(new_vars);
     existing_vars.sort();
 
     for vars in existing_vars.windows(2) {
@@ -256,7 +281,7 @@ fn table_join(clauses: Vec<Table>) -> Table {
         .expect("template should have at least one input clause");
 
     for clause in clauses {
-        table = table.join(&clause);
+        table = table.join(clause);
     }
 
     table
@@ -267,7 +292,7 @@ struct Vars {
 
 impl ToTokens for Vars {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(self.idents.clone());
+        tokens.extend(self.idents.iter().cloned());
     }
 }
 
@@ -334,7 +359,7 @@ fn parse_var_list(input: ParseStream<'_>) -> Result<Vec<Ident>> {
     Ok(idents.into_iter().collect())
 }
 
-fn parse_range_rows(input: ParseStream<'_>, vars: &Vars) -> Result<Table> {
+fn parse_range_rows(input: ParseStream<'_>, vars: Vars) -> Result<(Vec<Ident>, Table)> {
     if vars.len() != 1 {
         return Err(Error::new_spanned(
             &vars.idents[0],
@@ -346,7 +371,7 @@ fn parse_range_rows(input: ParseStream<'_>, vars: &Vars) -> Result<Table> {
     let values = range.values();
     let mut table = Table::empty(vars.len());
     for value in values {
-        table.add_row(vars, vec![value])?;
+        table.add_row(&vars, vec![value])?;
     }
 
     if table.is_empty() {
@@ -356,17 +381,17 @@ fn parse_range_rows(input: ParseStream<'_>, vars: &Vars) -> Result<Table> {
         ));
     }
 
-    Ok(table)
+    Ok((vars.idents, table))
 }
 
-fn parse_rows(input: ParseStream<'_>, vars: &Vars) -> Result<Table> {
+fn parse_rows(input: ParseStream<'_>, vars: Vars) -> Result<(Vec<Ident>, Table)> {
     let row_values;
     let bracket_token = bracketed!(row_values in input);
 
     let mut table = Table::empty(vars.len());
     while !row_values.is_empty() {
-        let values = parse_row(&row_values, vars)?;
-        table.add_row(vars, values)?;
+        let values = parse_row(&row_values, &vars)?;
+        table.add_row(&vars, values)?;
         if row_values.is_empty() {
             break;
         }
@@ -380,7 +405,7 @@ fn parse_rows(input: ParseStream<'_>, vars: &Vars) -> Result<Table> {
         ));
     }
 
-    Ok(table)
+    Ok((vars.idents, table))
 }
 
 fn parse_row(input: ParseStream<'_>, vars: &Vars) -> Result<Vec<TokenStream>> {
@@ -501,18 +526,18 @@ impl Parse for RangeInput {
         let tokens = TokenStream::from_iter([start.tokens.clone(), operator, end.tokens.clone()]);
         if start.kind != end.kind {
             return Err(Error::new_spanned(
-                TokenStream::from_iter([start.tokens.clone(), end.tokens.clone()]),
+                TokenStream::from_iter([start.tokens, end.tokens]),
                 "range bounds must both be integer literals, both byte literals, or both character literals",
             ));
         }
 
         let suffix = if start.suffix.is_empty() {
-            end.suffix.clone()
+            end.suffix
         } else if end.suffix.is_empty() || start.suffix == end.suffix {
-            start.suffix.clone()
+            start.suffix
         } else {
             return Err(Error::new_spanned(
-                end.tokens.clone(),
+                end.tokens,
                 "range bounds must use the same integer suffix",
             ));
         };
@@ -527,7 +552,7 @@ impl Parse for RangeInput {
             RangeRadix::UpperHex
         } else {
             return Err(Error::new_spanned(
-                end.tokens.clone(),
+                end.tokens,
                 "range bounds must use the same integer radix",
             ));
         };
@@ -644,8 +669,15 @@ fn parse_integer_bound(value: syn::LitInt) -> Result<RangeBound> {
         return Err(Error::new_spanned(tokens, "expected integer range bound"));
     }
 
-    let parsed = u64::from_str_radix(&digits, base)
-        .map_err(|_| Error::new_spanned(tokens.clone(), "integer range bounds must fit in u64"))?;
+    let parsed = match u64::from_str_radix(&digits, base) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            return Err(Error::new_spanned(
+                tokens,
+                "integer range bounds must fit in u64",
+            ));
+        }
+    };
 
     Ok(RangeBound {
         value: parsed,
