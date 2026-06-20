@@ -362,7 +362,7 @@ fn parse_var_list(input: ParseStream<'_>) -> Result<Vec<Ident>> {
 fn parse_range_rows(input: ParseStream<'_>, vars: Vars) -> Result<(Vec<Ident>, Table)> {
     if vars.len() != 1 {
         return Err(Error::new_spanned(
-            &vars.idents[0],
+            vars,
             "range inputs require exactly one template variable",
         ));
     }
