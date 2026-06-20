@@ -515,11 +515,7 @@ impl RangeInput {
                     RangeRadix::UpperHex => format!("0x{:0width$X}{}", value, self.suffix),
                 };
                 if self.strip_prefix {
-                    Some(if self.radix == RangeRadix::Decimal {
-                        repr.parse().expect("generated range literal should parse")
-                    } else {
-                        stripped_integer_to_tokens(&repr)
-                    })
+                    Some(integer_fragment_tokens(&repr))
                 } else {
                     Some(repr.parse().expect("generated range literal should parse"))
                 }
@@ -729,7 +725,10 @@ enum RangeRadix {
     UpperHex,
 }
 
-fn stripped_integer_to_tokens(repr: &str) -> TokenStream {
+// After `strip_prefix`, values such as `00A` are not valid Rust literals.
+// Split them into fragments that downstream macros can paste:
+// `00A` -> `00 A` -> `paste!([<Pin P>])` -> `Pin00A`.
+fn integer_fragment_tokens(repr: &str) -> TokenStream {
     let mut tokens = TokenStream::new();
     let mut chars = repr.chars().peekable();
 
