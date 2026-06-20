@@ -418,7 +418,13 @@ fn parse_row(input: ParseStream<'_>, vars: &Vars) -> Result<Vec<TokenStream>> {
 
         let row;
         parenthesized!(row in input);
-        let values = parse_row_values(&row)?;
+        let mut values = vec![];
+        while !row.is_empty() {
+            values.push(parse_tokens_until_comma(&row)?);
+            if row.peek(Token![,]) {
+                row.parse::<Token![,]>()?;
+            }
+        }
         if !row.is_empty() {
             return Err(row.error("unexpected tokens in row"));
         }
@@ -434,17 +440,6 @@ fn parse_row(input: ParseStream<'_>, vars: &Vars) -> Result<Vec<TokenStream>> {
             "plain rows require exactly one template variable",
         )),
     }
-}
-
-fn parse_row_values(input: ParseStream<'_>) -> Result<Vec<TokenStream>> {
-    let mut values = vec![];
-    while !input.is_empty() {
-        values.push(parse_tokens_until_comma(input)?);
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-        }
-    }
-    Ok(values)
 }
 
 fn parse_tokens_until_comma(input: ParseStream<'_>) -> Result<TokenStream> {
