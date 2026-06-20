@@ -333,7 +333,8 @@ impl Parse for Vars {
         let idents = if input.peek(syn::token::Paren) {
             let content;
             let paren_token = parenthesized!(content in input);
-            let idents = parse_var_list(&content)?;
+            let idents = Punctuated::<Ident, Token![,]>::parse_terminated(input)?;
+            let idents = idents.into_iter().collect::<Vec<_>>();
             if idents.is_empty() {
                 return Err(Error::new(
                     paren_token.span.join(),
@@ -352,11 +353,6 @@ impl Parse for Vars {
         vars.validate()?;
         Ok(vars)
     }
-}
-
-fn parse_var_list(input: ParseStream<'_>) -> Result<Vec<Ident>> {
-    let idents = Punctuated::<Ident, Token![,]>::parse_terminated(input)?;
-    Ok(idents.into_iter().collect())
 }
 
 fn parse_range_rows(input: ParseStream<'_>, vars: Vars) -> Result<(Vec<Ident>, Table)> {
