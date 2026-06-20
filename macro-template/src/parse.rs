@@ -67,9 +67,7 @@ impl Parse for Template {
         }
 
         let rows = if clauses.len() == 1 {
-            clauses
-                .pop()
-                .expect("input clause list should not be empty")
+            clauses.pop().unwrap()
         } else {
             cartesian_product_rows(clauses)
         };
@@ -179,225 +177,6 @@ impl Parse for ForClause {
             rows,
         })
     }
-}
-
-struct RangeInput {
-    start: u64,
-    end: u64,
-    inclusive: bool,
-    kind: RangeKind,
-    suffix: String,
-    width: usize,
-    radix: RangeRadix,
-    tokens: TokenStream,
-}
-
-impl RangeInput {
-    fn values(&self) -> Vec<TokenStream> {
-        if self.start > self.end || (!self.inclusive && self.start == self.end) {
-            return vec![];
-        }
-
-        let iter: Box<dyn Iterator<Item = u64>> = if self.inclusive {
-            Box::new(self.start..=self.end)
-        } else {
-            Box::new(self.start..self.end)
-        };
-
-        iter.filter_map(|value| self.value_tokens(value)).collect()
-    }
-
-    fn value_tokens(&self, value: u64) -> Option<TokenStream> {
-        match self.kind {
-            RangeKind::Integer => {
-                let width = self.width;
-                let repr = match self.radix {
-                    RangeRadix::Binary => format!("0b{:0width$b}{}", value, self.suffix),
-                    RangeRadix::Octal => format!("0o{:0width$o}{}", value, self.suffix),
-                    RangeRadix::Decimal => format!("{:0width$}{}", value, self.suffix),
-                    RangeRadix::LowerHex => format!("0x{:0width$x}{}", value, self.suffix),
-                    RangeRadix::UpperHex => format!("0x{:0width$X}{}", value, self.suffix),
-                };
-                Some(repr.parse().expect("generated range literal should parse"))
-            }
-            RangeKind::Byte => u8::try_from(value)
-                .ok()
-                .map(|value| Literal::byte_character(value).into_token_stream()),
-            RangeKind::Character => u32::try_from(value)
-                .ok()
-                .and_then(char::from_u32)
-                .map(|value| Literal::character(value).into_token_stream()),
-        }
-    }
-}
-
-impl Parse for RangeInput {
-    fn parse(input: ParseStream<'_>) -> Result<Self> {
-        let start = input.parse::<RangeBound>()?;
-        let (inclusive, operator) = if input.peek(Token![..=]) {
-            (true, input.parse::<Token![..=]>()?.into_token_stream())
-        } else {
-            (false, input.parse::<Token![..]>()?.into_token_stream())
-        };
-        let end = input.parse::<RangeBound>()?;
-
-        let tokens = TokenStream::from_iter([start.tokens.clone(), operator, end.tokens.clone()]);
-        if start.kind != end.kind {
-            return Err(Error::new_spanned(
-                TokenStream::from_iter([start.tokens.clone(), end.tokens.clone()]),
-                "range bounds must both be integer literals, both byte literals, or both character literals",
-            ));
-        }
-
-        let suffix = if start.suffix.is_empty() {
-            end.suffix.clone()
-        } else if end.suffix.is_empty() || start.suffix == end.suffix {
-            start.suffix.clone()
-        } else {
-            return Err(Error::new_spanned(
-                end.tokens.clone(),
-                "range bounds must use the same integer suffix",
-            ));
-        };
-
-        let radix = if start.radix == end.radix {
-            start.radix
-        } else if matches!(
-            (start.radix, end.radix),
-            (RangeRadix::LowerHex, RangeRadix::UpperHex)
-                | (RangeRadix::UpperHex, RangeRadix::LowerHex)
-        ) {
-            RangeRadix::UpperHex
-        } else {
-            return Err(Error::new_spanned(
-                end.tokens.clone(),
-                "range bounds must use the same integer radix",
-            ));
-        };
-
-        Ok(Self {
-            start: start.value,
-            end: end.value,
-            inclusive,
-            kind: start.kind,
-            suffix,
-            width: start.width.min(end.width),
-            radix,
-            tokens,
-        })
-    }
-}
-
-struct RangeBound {
-    value: u64,
-    kind: RangeKind,
-    suffix: String,
-    width: usize,
-    radix: RangeRadix,
-    tokens: TokenStream,
-}
-
-impl Parse for RangeBound {
-    fn parse(input: ParseStream<'_>) -> Result<Self> {
-        let literal = input.parse::<Lit>()?;
-        let tokens = literal.clone().into_token_stream();
-
-        match literal {
-            Lit::Int(value) => parse_integer_bound(value),
-            Lit::Byte(value) => Ok(Self {
-                value: u64::from(value.value()),
-                kind: RangeKind::Byte,
-                suffix: String::new(),
-                width: 0,
-                radix: RangeRadix::Decimal,
-                tokens,
-            }),
-            Lit::Char(value) => Ok(Self {
-                value: u64::from(u32::from(value.value())),
-                kind: RangeKind::Character,
-                suffix: String::new(),
-                width: 0,
-                radix: RangeRadix::Decimal,
-                tokens,
-            }),
-            _ => Err(Error::new_spanned(
-                tokens,
-                "range bounds must be integer, byte, or character literals",
-            )),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RangeKind {
-    Integer,
-    Byte,
-    Character,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RangeRadix {
-    Binary,
-    Octal,
-    Decimal,
-    LowerHex,
-    UpperHex,
-}
-
-fn parse_integer_bound(value: syn::LitInt) -> Result<RangeBound> {
-    let tokens = value.clone().into_token_stream();
-    let repr = value.to_string();
-
-    let (mut radix, base, digits_start) = if repr.starts_with("0b") {
-        (RangeRadix::Binary, 2, 2)
-    } else if repr.starts_with("0o") {
-        (RangeRadix::Octal, 8, 2)
-    } else if repr.starts_with("0x") {
-        (RangeRadix::LowerHex, 16, 2)
-    } else if repr.starts_with("0X") {
-        (RangeRadix::UpperHex, 16, 2)
-    } else {
-        (RangeRadix::Decimal, 10, 0)
-    };
-
-    let body = &repr[digits_start..];
-    let mut digits = String::new();
-    let mut suffix = String::new();
-
-    for (offset, ch) in body.char_indices() {
-        match ch {
-            '_' => {}
-            '0'..='9' => digits.push(ch),
-            'A'..='F' if radix == RangeRadix::LowerHex => {
-                digits.push(ch);
-                radix = RangeRadix::UpperHex;
-            }
-            'a'..='f' | 'A'..='F' if base == 16 => digits.push(ch),
-            _ => {
-                if digits.is_empty() {
-                    return Err(Error::new_spanned(tokens, "expected integer range bound"));
-                }
-                suffix = repr[digits_start + offset..].to_owned();
-                break;
-            }
-        }
-    }
-
-    if digits.is_empty() {
-        return Err(Error::new_spanned(tokens, "expected integer range bound"));
-    }
-
-    let parsed = u64::from_str_radix(&digits, base)
-        .map_err(|_| Error::new_spanned(tokens.clone(), "integer range bounds must fit in u64"))?;
-
-    Ok(RangeBound {
-        value: parsed,
-        kind: RangeKind::Integer,
-        suffix,
-        width: digits.len(),
-        radix,
-        tokens,
-    })
 }
 
 fn validate_clause_vars(new_vars: &[Ident], existing_vars: &mut Vec<Ident>) -> Result<()> {
@@ -600,4 +379,223 @@ fn parse_tokens_until_comma(input: ParseStream<'_>) -> Result<TokenStream> {
     }
 
     Ok(tokens.into_iter().collect())
+}
+
+struct RangeInput {
+    start: u64,
+    end: u64,
+    inclusive: bool,
+    kind: RangeKind,
+    suffix: String,
+    width: usize,
+    radix: RangeRadix,
+    tokens: TokenStream,
+}
+
+impl RangeInput {
+    fn values(&self) -> Vec<TokenStream> {
+        if self.start > self.end || (!self.inclusive && self.start == self.end) {
+            vec![]
+        } else if self.inclusive {
+            (self.start..=self.end)
+                .filter_map(|v| self.value_to_tokens(v))
+                .collect()
+        } else {
+            (self.start..self.end)
+                .filter_map(|v| self.value_to_tokens(v))
+                .collect()
+        }
+    }
+
+    fn value_to_tokens(&self, value: u64) -> Option<TokenStream> {
+        match self.kind {
+            RangeKind::Integer => {
+                let width = self.width;
+                let repr = match self.radix {
+                    RangeRadix::Binary => format!("0b{:0width$b}{}", value, self.suffix),
+                    RangeRadix::Octal => format!("0o{:0width$o}{}", value, self.suffix),
+                    RangeRadix::Decimal => format!("{:0width$}{}", value, self.suffix),
+                    RangeRadix::LowerHex => format!("0x{:0width$x}{}", value, self.suffix),
+                    RangeRadix::UpperHex => format!("0x{:0width$X}{}", value, self.suffix),
+                };
+                Some(repr.parse().expect("generated range literal should parse"))
+            }
+            RangeKind::Byte => u8::try_from(value)
+                .ok()
+                .map(|value| Literal::byte_character(value).into_token_stream()),
+            RangeKind::Character => u32::try_from(value)
+                .ok()
+                .and_then(char::from_u32)
+                .map(|value| Literal::character(value).into_token_stream()),
+        }
+    }
+}
+
+impl Parse for RangeInput {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let start = input.parse::<RangeBound>()?;
+        let (inclusive, operator) = if input.peek(Token![..=]) {
+            (true, input.parse::<Token![..=]>()?.into_token_stream())
+        } else {
+            (false, input.parse::<Token![..]>()?.into_token_stream())
+        };
+        let end = input.parse::<RangeBound>()?;
+
+        let tokens = TokenStream::from_iter([start.tokens.clone(), operator, end.tokens.clone()]);
+        if start.kind != end.kind {
+            return Err(Error::new_spanned(
+                TokenStream::from_iter([start.tokens.clone(), end.tokens.clone()]),
+                "range bounds must both be integer literals, both byte literals, or both character literals",
+            ));
+        }
+
+        let suffix = if start.suffix.is_empty() {
+            end.suffix.clone()
+        } else if end.suffix.is_empty() || start.suffix == end.suffix {
+            start.suffix.clone()
+        } else {
+            return Err(Error::new_spanned(
+                end.tokens.clone(),
+                "range bounds must use the same integer suffix",
+            ));
+        };
+
+        let radix = if start.radix == end.radix {
+            start.radix
+        } else if matches!(
+            (start.radix, end.radix),
+            (RangeRadix::LowerHex, RangeRadix::UpperHex)
+                | (RangeRadix::UpperHex, RangeRadix::LowerHex)
+        ) {
+            RangeRadix::UpperHex
+        } else {
+            return Err(Error::new_spanned(
+                end.tokens.clone(),
+                "range bounds must use the same integer radix",
+            ));
+        };
+
+        Ok(Self {
+            start: start.value,
+            end: end.value,
+            inclusive,
+            kind: start.kind,
+            suffix,
+            width: start.width.min(end.width),
+            radix,
+            tokens,
+        })
+    }
+}
+
+struct RangeBound {
+    value: u64,
+    kind: RangeKind,
+    suffix: String,
+    width: usize,
+    radix: RangeRadix,
+    tokens: TokenStream,
+}
+
+impl Parse for RangeBound {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let literal = input.parse::<Lit>()?;
+        let tokens = literal.clone().into_token_stream();
+
+        match literal {
+            Lit::Int(value) => parse_integer_bound(value),
+            Lit::Byte(value) => Ok(Self {
+                value: u64::from(value.value()),
+                kind: RangeKind::Byte,
+                suffix: String::new(),
+                width: 0,
+                radix: RangeRadix::Decimal,
+                tokens,
+            }),
+            Lit::Char(value) => Ok(Self {
+                value: u64::from(u32::from(value.value())),
+                kind: RangeKind::Character,
+                suffix: String::new(),
+                width: 0,
+                radix: RangeRadix::Decimal,
+                tokens,
+            }),
+            _ => Err(Error::new_spanned(
+                tokens,
+                "range bounds must be integer, byte, or character literals",
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RangeKind {
+    Integer,
+    Byte,
+    Character,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RangeRadix {
+    Binary,
+    Octal,
+    Decimal,
+    LowerHex,
+    UpperHex,
+}
+
+fn parse_integer_bound(value: syn::LitInt) -> Result<RangeBound> {
+    let tokens = value.clone().into_token_stream();
+    let repr = value.to_string();
+
+    let (mut radix, base, digits_start) = if repr.starts_with("0b") {
+        (RangeRadix::Binary, 2, 2)
+    } else if repr.starts_with("0o") {
+        (RangeRadix::Octal, 8, 2)
+    } else if repr.starts_with("0x") {
+        (RangeRadix::LowerHex, 16, 2)
+    } else if repr.starts_with("0X") {
+        (RangeRadix::UpperHex, 16, 2)
+    } else {
+        (RangeRadix::Decimal, 10, 0)
+    };
+
+    let body = &repr[digits_start..];
+    let mut digits = String::new();
+    let mut suffix = String::new();
+
+    for (offset, ch) in body.char_indices() {
+        match ch {
+            '_' => {}
+            '0'..='9' => digits.push(ch),
+            'A'..='F' if radix == RangeRadix::LowerHex => {
+                digits.push(ch);
+                radix = RangeRadix::UpperHex;
+            }
+            'a'..='f' | 'A'..='F' if base == 16 => digits.push(ch),
+            _ => {
+                if digits.is_empty() {
+                    return Err(Error::new_spanned(tokens, "expected integer range bound"));
+                }
+                suffix = repr[digits_start + offset..].to_owned();
+                break;
+            }
+        }
+    }
+
+    if digits.is_empty() {
+        return Err(Error::new_spanned(tokens, "expected integer range bound"));
+    }
+
+    let parsed = u64::from_str_radix(&digits, base)
+        .map_err(|_| Error::new_spanned(tokens.clone(), "integer range bounds must fit in u64"))?;
+
+    Ok(RangeBound {
+        value: parsed,
+        kind: RangeKind::Integer,
+        suffix,
+        width: digits.len(),
+        radix,
+        tokens,
+    })
 }
