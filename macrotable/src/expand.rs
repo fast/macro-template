@@ -57,7 +57,7 @@ pub fn splice(input: TokenStream) -> Result<TokenStream> {
     Ok(output)
 }
 
-fn substitute_tokens(names: &[Ident], row: &[Ident], tokens: TokenStream) -> TokenStream {
+fn substitute_tokens(names: &[Ident], row: &[TokenStream], tokens: TokenStream) -> TokenStream {
     let tokens = tokens.into_iter().collect::<Vec<_>>();
     let mut output = TokenStream::new();
 
@@ -65,7 +65,7 @@ fn substitute_tokens(names: &[Ident], row: &[Ident], tokens: TokenStream) -> Tok
     while i < tokens.len() {
         if let Some((ident, consumed)) = read_hash_ident(&tokens[i..]) {
             if let Some(index) = find_name(names, ident) {
-                output.extend([TokenTree::Ident(row[index].clone())]);
+                output.extend(row[index].clone());
                 i += consumed;
                 continue;
             }

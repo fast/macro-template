@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use proc_macro2::Delimiter;
 use proc_macro2::Ident;
 use proc_macro2::TokenStream;
 use proc_macro2::TokenTree;
@@ -53,7 +54,7 @@ impl Parse for Invocation {
 
 pub struct Table {
     pub names: Vec<Ident>,
-    pub rows: Vec<Vec<Ident>>,
+    pub rows: Vec<Vec<TokenStream>>,
 }
 
 enum Pattern {
@@ -79,13 +80,13 @@ impl Pattern {
         names
     }
 
-    fn bind(&self, values: Vec<Ident>) -> Result<Vec<Ident>> {
+    fn bind(&self, values: Vec<TokenStream>) -> Result<Vec<TokenStream>> {
         let slots = self.slots();
         if values.len() != slots.len() {
             let expected = slots.len();
             let found = values.len();
             return Err(Error::new_spanned(
-                TokenStream::from_iter(values.into_iter().map(TokenTree::Ident)),
+                join_streams(&values),
                 format!(
                     "this row provides {found} value{}, but the binding pattern expects {expected}",
                     if found == 1 { "" } else { "s" }
@@ -178,14 +179,15 @@ fn check_duplicate_names(slots: &[Slot]) -> Result<()> {
 }
 
 fn parse_rows(input: ParseStream<'_>, pattern: &Pattern, span: proc_macro2::Span) -> Result<Table> {
+    let tokens = input.parse::<TokenStream>()?;
     let rows = match pattern {
-        Pattern::Single(_) => Punctuated::<Ident, Token![,]>::parse_terminated(input)?
+        Pattern::Single(_) => split_values(tokens)?
             .into_iter()
             .map(|value| pattern.bind(vec![value]))
             .collect::<Result<Vec<_>>>()?,
-        Pattern::Tuple(_) => Punctuated::<Row, Token![,]>::parse_terminated(input)?
+        Pattern::Tuple(_) => split_values(tokens)?
             .into_iter()
-            .map(|row| pattern.bind(row.values))
+            .map(|row| parse_tuple_row(row).and_then(|values| pattern.bind(values)))
             .collect::<Result<Vec<_>>>()?,
     };
 
@@ -199,23 +201,76 @@ fn parse_rows(input: ParseStream<'_>, pattern: &Pattern, span: proc_macro2::Span
     })
 }
 
-struct Row {
-    values: Vec<Ident>,
+fn parse_tuple_row(tokens: TokenStream) -> Result<Vec<TokenStream>> {
+    let mut iter = tokens.clone().into_iter();
+    let Some(TokenTree::Group(group)) = iter.next() else {
+        return Err(Error::new_spanned(
+            tokens,
+            "rows for tuple bindings must use parentheses, such as `(u16, Small)`",
+        ));
+    };
+
+    if group.delimiter() != Delimiter::Parenthesis || iter.next().is_some() {
+        return Err(Error::new_spanned(
+            tokens,
+            "rows for tuple bindings must use parentheses, such as `(u16, Small)`",
+        ));
+    }
+
+    split_values(group.stream())
 }
 
-impl Parse for Row {
-    fn parse(input: ParseStream<'_>) -> Result<Self> {
-        if !input.peek(syn::token::Paren) {
-            return Err(
-                input.error("rows for tuple bindings must use parentheses, such as `(u16, Small)`")
-            );
+fn split_values(tokens: TokenStream) -> Result<Vec<TokenStream>> {
+    let mut values = vec![];
+    let mut value = TokenStream::new();
+    let mut angle_depth = 0usize;
+
+    for token in tokens {
+        if is_comma(&token) && angle_depth == 0 {
+            if is_empty(&value) {
+                return Err(Error::new_spanned(token, "expected value before comma"));
+            }
+
+            values.push(value);
+            value = TokenStream::new();
+            continue;
         }
 
-        let row;
-        parenthesized!(row in input);
-        let values = Punctuated::<Ident, Token![,]>::parse_terminated(&row)?
-            .into_iter()
-            .collect();
-        Ok(Self { values })
+        update_angle_depth(&token, &mut angle_depth);
+        value.extend([token]);
     }
+
+    if !is_empty(&value) {
+        values.push(value);
+    }
+
+    Ok(values)
+}
+
+fn update_angle_depth(token: &TokenTree, angle_depth: &mut usize) {
+    let TokenTree::Punct(punct) = token else {
+        return;
+    };
+
+    match punct.as_char() {
+        '<' => *angle_depth += 1,
+        '>' => *angle_depth = angle_depth.saturating_sub(1),
+        _ => {}
+    }
+}
+
+fn is_comma(token: &TokenTree) -> bool {
+    matches!(token, TokenTree::Punct(punct) if punct.as_char() == ',')
+}
+
+fn is_empty(tokens: &TokenStream) -> bool {
+    tokens.clone().into_iter().next().is_none()
+}
+
+fn join_streams(values: &[TokenStream]) -> TokenStream {
+    let mut tokens = TokenStream::new();
+    for value in values {
+        tokens.extend(value.clone());
+    }
+    tokens
 }

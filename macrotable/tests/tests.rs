@@ -67,6 +67,21 @@ fn repeat_accepts_trailing_comma_in_input_list() {
 }
 
 #[test]
+fn repeat_accepts_multi_token_input_items() {
+    let mut count = 0usize;
+
+    repeat!(#T in [
+        std::option::Option<u8>,
+        std::result::Result<u8, &'static str>,
+    ] {
+        let _ = std::mem::size_of::<#T>();
+        count += 1;
+    });
+
+    assert_eq!(count, 2);
+}
+
+#[test]
 fn repeat_leaves_bare_identifiers_unchanged() {
     let mut values = vec![];
     let source = 1usize;
@@ -92,6 +107,24 @@ fn repeat_expands_tuple_bindings() {
     });
 
     assert_eq!(total, 3);
+}
+
+#[test]
+fn repeat_accepts_multi_token_tuple_row_values() {
+    let mut count = 0usize;
+
+    repeat!((#T, #value) in [
+        (std::option::Option<u8>, None::<u8>),
+        (
+            std::result::Result<u8, &'static str>,
+            Ok::<u8, &'static str>(1u8),
+        ),
+    ] {
+        let _: #T = #value;
+        count += 1;
+    });
+
+    assert_eq!(count, 2);
 }
 
 #[test]
@@ -241,6 +274,15 @@ fn splice_expands_without_separator() {
     });
 
     assert_eq!(values, [1, 2, 3]);
+}
+
+#[test]
+fn splice_accepts_multi_token_input_items() {
+    splice!(#value in [1 + 1, 2 + 2] {
+        let values = [#( #value ),*];
+    });
+
+    assert_eq!(values, [2, 4]);
 }
 
 #[test]

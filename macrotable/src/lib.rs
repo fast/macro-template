@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Compile-time repetition over short identifier lists.
+//! Compile-time repetition over short lists of Rust token sequences.
 //!
 //! This crate provides two function-like procedural macros:
 //!
@@ -163,20 +163,17 @@
 //! Bind placeholders as `#name` and use them as `#name`. Bare identifiers are
 //! left unchanged.
 //!
-//! Input values must be single identifier tokens. Paths, literals, generic
-//! types, arrays, tuples, and grouped token fragments are not accepted as list
-//! values. Use an alias when a repeated value stands for something more complex.
+//! Each list entry can contain one or more Rust tokens, such as a path, type,
+//! expression, or grouped syntax. Separate entries with commas at the list level.
 //!
-//! ```rust,ignore
-//! type UserId = crate::models::UserId;
-//! type AccountId = crate::models::AccountId;
+//! ```rust
+//! use macrotable::repeat;
 //!
-//! repeat!(#Id in [UserId, AccountId] {
-//!     impl MetricLabel for #Id {
-//!         fn write_label(&self, out: &mut String) {
-//!             out.push_str(&self.to_string());
-//!         }
-//!     }
+//! repeat!(#T in [
+//!     std::option::Option<u8>,
+//!     std::result::Result<u8, &'static str>,
+//! ] {
+//!     let _ = std::mem::size_of::<#T>();
 //! });
 //! ```
 //!
@@ -243,7 +240,7 @@
 //!
 //! - missing `#` in a binding,
 //! - tuple pattern and tuple row arity mismatches,
-//! - input values that are not single identifiers,
+//! - empty input lists or empty input values,
 //! - current `splice!` placeholders used outside `#( ... )*`,
 //! - `splice!` invocations without any `#( ... )*` repetition.
 

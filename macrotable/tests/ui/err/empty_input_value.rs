@@ -1,7 +1,7 @@
 use macrotable::repeat;
 
 fn main() {
-    repeat!(#value in [1usize] {
+    repeat!(#value in [one,, two] {
         let _ = #value;
     });
 }

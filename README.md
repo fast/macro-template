@@ -17,7 +17,7 @@
 [actions-url]: https://github.com/fast/macro-template/actions?query=workflow%3ACI
 
 `macrotable` provides two function-like procedural macros for small
-compile-time repetitions over identifier lists.
+compile-time repetitions over comma-separated Rust token sequences.
 
 - `repeat!` emits the whole body once per input row.
 - `splice!` emits the body once and expands `#( ... )*` fragments inside it.
@@ -37,6 +37,9 @@ function arguments, and macro arguments.
 
 Function-like macros are a good fit when the repeated code does not belong to
 one item that an attribute or derive macro can annotate.
+
+Each list entry can contain one or more Rust tokens, such as a path, type,
+expression, or grouped syntax. Separate entries with commas at the list level.
 
 ## Examples
 

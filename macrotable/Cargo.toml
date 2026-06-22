@@ -17,7 +17,7 @@ name = "macrotable"
 version = "0.1.0"
 
 categories = ["development-tools::procedural-macro-helpers"]
-description = "Procedural macros for small compile-time repetitions over identifier lists."
+description = "Procedural macros for small compile-time repetitions over Rust token sequences."
 keywords = ["macro", "repeat", "splice", "codegen"]
 
 edition.workspace = true
