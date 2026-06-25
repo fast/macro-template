@@ -19,11 +19,11 @@ version = "0.1.0"
 categories = ["development-tools::procedural-macro-helpers"]
 description = "Procedural macros for small compile-time repetitions over Rust token sequences."
 keywords = ["macro", "repeat", "splice", "codegen"]
+readme = "README.md"
 
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
