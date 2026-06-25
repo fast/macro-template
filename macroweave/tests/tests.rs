@@ -71,10 +71,10 @@ fn repeat_accepts_multi_token_input_items() {
     let mut count = 0usize;
 
     repeat!(T in [
-        std::option::Option<u8>,
-        std::result::Result<u8, &'static str>,
+        Option<u8>,
+        Result<u8, &'static str>,
     ] {
-        let _ = std::mem::size_of::<T>();
+        let _ = size_of::<T>();
         count += 1;
     });
 
@@ -114,9 +114,9 @@ fn repeat_accepts_multi_token_tuple_row_values() {
     let mut count = 0usize;
 
     repeat!((T, value) in [
-        (std::option::Option<u8>, None::<u8>),
+        (Option<u8>, None::<u8>),
         (
-            std::result::Result<u8, &'static str>,
+            Result<u8, &'static str>,
             Ok::<u8, &'static str>(1u8),
         ),
     ] {

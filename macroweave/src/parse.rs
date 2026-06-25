@@ -86,7 +86,7 @@ impl Pattern {
             let expected = slots.len();
             let found = values.len();
             return Err(Error::new_spanned(
-                join_streams(&values),
+                values.into_iter().collect::<TokenStream>(),
                 format!(
                     "this row provides {found} value{}, but the binding pattern expects {expected}",
                     if found == 1 { "" } else { "s" }
@@ -260,12 +260,4 @@ fn is_comma(token: &TokenTree) -> bool {
 
 fn is_empty(tokens: &TokenStream) -> bool {
     tokens.clone().into_iter().next().is_none()
-}
-
-fn join_streams(values: &[TokenStream]) -> TokenStream {
-    let mut tokens = TokenStream::new();
-    for value in values {
-        tokens.extend(value.clone());
-    }
-    tokens
 }

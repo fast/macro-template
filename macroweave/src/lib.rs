@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Procedural macros for generating repeated Rust code from compact,
-//! table-driven inputs.
+//! Procedural macros for generating repeated Rust code from compact, table-driven inputs.
 //!
-//! `macroweave` is for repetition that has to become Rust syntax, not runtime
-//! control flow. You write the choices once, name the columns, and use those
-//! names in Rust syntax.
+//! `macroweave` is for repetition that has to become Rust syntax, not runtime control flow.
+//! You write the choices once, name the columns, and use those names in Rust syntax.
 //!
 //! That is the table-driven case `macroweave` is built around:
 //!
@@ -44,8 +42,8 @@
 //! assert_eq!(u32::read_le(&[1, 0, 0, 0]), 1);
 //! ```
 //!
-//! This cannot be written as an ordinary for-loop because `Ty` and `Width` need
-//! to be substituted as tokens before the generated code is type-checked.
+//! This cannot be written as an ordinary for-loop because `Ty` and `Width` need to be substituted
+//! as tokens before the generated code is type-checked.
 //!
 //! # Whole-body repetition
 //!
@@ -68,14 +66,15 @@
 //!     }
 //! });
 //!
+//! assert_eq!(<u8 as TypeName>::NAME, "u8");
 //! assert_eq!(<u16 as TypeName>::NAME, "u16");
+//! assert_eq!(<u32 as TypeName>::NAME, "u32");
 //! ```
 //!
 //! # Partial repetition
 //!
-//! When only part of a surrounding construct should repeat, put that part in
-//! `#( ... )*`. A single separator token tree can be written before `*`, such
-//! as `#( ... ),*` for comma-separated output:
+//! When only part of a surrounding construct should repeat, put that part in `#( ... )*`. A single
+//! separator token tree can be written before `*`, such as `#( ... ),*` for comma-separated output:
 //!
 //! ```rust
 //! use macroweave::splice;
@@ -97,14 +96,13 @@
 //! assert_eq!(keyword_code("fn"), None);
 //! ```
 //!
-//! When a [`splice!`] body contains `#( ... )*` or `#( ... ),*`, placeholders
-//! are substituted only inside the splice body, and the surrounding tokens are
-//! emitted once. Surrounding identifiers stay literal, even when they have the
-//! same name as a placeholder. If a value should vary, place it in the splice
-//! body.
+//! When a [`splice!`] body contains `#( ... )*` or `#( ... ),*`, placeholders are substituted only
+//! inside the splice body, and the surrounding tokens are emitted once. Surrounding identifiers
+//! stay literal, even when they have the same name as a placeholder. If a value should vary,
+//! place it in the splice body.
 //!
-//! `#( ..., )*` and `#( ... ),*` are different: the latter does not produce a
-//! trailing comma. This matches delimiter repetition in `macro_rules!`.
+//! `#( ..., )*` and `#( ... ),*` are different: the latter does not produce a trailing comma.
+//! This matches delimiter repetition in `macro_rules!`.
 //!
 //! # Syntax notes
 //!
@@ -118,8 +116,8 @@ mod parse;
 
 /// Repeats the whole body once for each input row.
 ///
-/// See the crate-level documentation for syntax details, tuple bindings,
-/// nesting behavior, and input restrictions.
+/// See the [crate-level documentation](self) for syntax details, tuple bindings, nesting behavior,
+/// and input restrictions.
 #[proc_macro]
 pub fn repeat(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     expand::repeat(input.into())
@@ -129,8 +127,8 @@ pub fn repeat(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 /// Emits the body once and expands each `#( ... )*` fragment from the input rows.
 ///
-/// See the crate-level documentation for repetition syntax, scope rules, and
-/// nesting behavior.
+/// See the [crate-level documentation](self) for repetition syntax, scope rules, and nesting
+/// behavior.
 #[proc_macro]
 pub fn splice(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     expand::splice(input.into())

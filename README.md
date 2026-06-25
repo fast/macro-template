@@ -13,8 +13,8 @@
 [msrv-badge]: https://img.shields.io/badge/MSRV-1.85-green?logo=rust
 [license-badge]: https://img.shields.io/crates/l/macroweave
 [license-url]: LICENSE
-[actions-badge]: https://github.com/fast/macro-template/workflows/CI/badge.svg
-[actions-url]: https://github.com/fast/macro-template/actions?query=workflow%3ACI
+[actions-badge]: https://github.com/fast/macroweave/workflows/CI/badge.svg
+[actions-url]: https://github.com/fast/macroweave/actions?query=workflow%3ACI
 
 `macroweave` provides `repeat!` and `splice!`, procedural macros for generating
 repeated Rust code from compact, table-driven inputs.
@@ -28,9 +28,7 @@ macroweave = "0.1"
 
 ## Motivation
 
-`macroweave` is for repetition that has to become Rust syntax, not runtime
-control flow. You write the choices once, name the columns, and use those names
-in Rust syntax.
+`macroweave` is for repetition that has to become Rust syntax, not runtime control flow. You write the choices once, name the columns, and use those names in Rust syntax.
 
 That is the table-driven case `macroweave` is built around:
 
